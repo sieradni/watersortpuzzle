@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState, useRef, use } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 
 // Water Sort Puzzle - single-file React component
 // Tailwind CSS assumed available in the host project
-// Default export a React component that renders the full game
 
 const COLORS = [
 	"lime",
@@ -23,23 +22,89 @@ function randomInt(min, max) {
 	return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 function fisherYatesShuffle(array) {
-  const result = [...array];
-  for (let i = result.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [result[i], result[j]] = [result[j], result[i]];
-  }
-  return result;
+	const result = [...array];
+	for (let i = result.length - 1; i > 0; i--) {
+		const j = Math.floor(Math.random() * (i + 1));
+		[result[i], result[j]] = [result[j], result[i]];
+	}
+	return result;
+}
+
+// Convert vials to a compact string for hashing/visited
+function stateToString(vials) {
+	// each vial: color1,color2,...  (bottom -> top)
+	return vials.map((v) => v.layers.join(",")).join("|");
+}
+function stringToVials(s) {
+	if (!s) return [];
+	return s.split("|").map((part) => ({
+		layers: part === "" ? [] : part.split(","),
+	}));
+}
+
+// Check goal: all vials empty OR full of same color (length === 4)
+function isGoal(vials) {
+	return vials.every((v) => {
+		if (v.layers.length === 0) return true;
+		if (v.layers.length !== 4) return false;
+		const first = v.layers[0];
+		return v.layers.every((l) => l === first);
+	});
+}
+
+// simulate canPour for an arbitrary vials state
+function canPourState(vials, fromIdx, toIdx) {
+	if (fromIdx === toIdx) return false;
+	const src = vials[fromIdx];
+	const dst = vials[toIdx];
+	if (!src || !dst) return false;
+	if (src.layers.length === 0) return false;
+	if (dst.layers.length === 4) return false;
+	const topSrc = src.layers[src.layers.length - 1];
+	if (dst.layers.length === 0) return true;
+	const topDst = dst.layers[dst.layers.length - 1];
+	return topDst === topSrc;
+}
+
+// perform pour on a copy of vials and return new vials
+function doPourState(vials, fromIdx, toIdx) {
+	const next = cloneVials(vials);
+	const src = next[fromIdx];
+	const dst = next[toIdx];
+	const color = src.layers[src.layers.length - 1];
+
+	// count contiguous top of same color in src
+	let moveCount = 0;
+	for (let i = src.layers.length - 1; i >= 0; i--) {
+		if (src.layers[i] === color) moveCount++;
+		else break;
+	}
+	const space = 4 - dst.layers.length;
+	const actualMove = Math.min(moveCount, space);
+	for (let k = 0; k < actualMove; k++) {
+		dst.layers.push(src.layers.pop());
+	}
+	return next;
 }
 
 export default function WaterSortPuzzle() {
-	const [numVials, setNumVials] = useState(7); // default, can be randomized
+	const [numVials, setNumVials] = useState(7);
 	const [vials, setVials] = useState([]);
-	const [selected, setSelected] = useState(null); // index of selected vial
+	const [selected, setSelected] = useState(null);
 	const [history, setHistory] = useState([]);
 	const [timeLeft, setTimeLeft] = useState(180);
 	const timerRef = useRef(null);
 	const [running, setRunning] = useState(false);
 	const [message, setMessage] = useState("");
+
+	// Solver state:
+	const [solverInfo, setSolverInfo] = useState({
+		computing: false,
+		found: false,
+		minMoves: null,
+		firstMove: null, // { from, to } or null
+		reason: "",
+	});
 
 	// initialize a new game
 	function newGame(n = null) {
@@ -48,16 +113,14 @@ export default function WaterSortPuzzle() {
 
 		const colorSet = fisherYatesShuffle(COLORS).slice(0, nV - 2);
 		const useColors = fisherYatesShuffle(
-			colorSet.flatMap(color => Array(4).fill(color))
+			colorSet.flatMap((color) => Array(4).fill(color))
 		);
-		// useColors.forEach(color => console.log(`%c${color}`, `color: ${color}`));
 
-		// Build vials: each vial has capacity 4 layers. Fill each vial with a random amount 1..4
 		const built = [];
-		const extra = ((nV-2) * 4 )% 3
+		const extra = ((nV - 2) * 4) % 3;
 		for (let i = 0; i < nV; i++) {
 			const layers = [];
-			if (i < extra && 4*(nV-2) > 3 * nV) {
+			if (i < extra && 4 * (nV - 2) > 3 * nV) {
 				layers.push(useColors.pop());
 			}
 			const colorsLeft = useColors.length;
@@ -66,7 +129,6 @@ export default function WaterSortPuzzle() {
 			}
 			built.push({ layers });
 		}
-		// There may be empty space; some vials could be empty if fill==0 but spec said 1..4 so none empty initially
 
 		setVials(built);
 		setSelected(null);
@@ -78,7 +140,6 @@ export default function WaterSortPuzzle() {
 
 	// compute score
 	const score = useMemo(() => {
-		// Score = 100 * vials + seconds left
 		return 100 * numVials + Math.max(0, Math.floor(timeLeft));
 	}, [numVials, timeLeft]);
 
@@ -100,62 +161,27 @@ export default function WaterSortPuzzle() {
 		return () => clearInterval(timerRef.current);
 	}, [running]);
 
-	// Check win: all vials either empty or full of one color (all layers same) and either full (4) or empty
+	// Check win
 	useEffect(() => {
 		if (vials.length === 0) return;
-		const allGood = vials.every((v) => {
-			if (v.layers.length === 0) return true;
-			if (v.layers.length !== 4) return false;
-			const first = v.layers[0];
-			return v.layers.every((l) => l === first);
-		});
-		if (allGood) {
+		if (isGoal(vials)) {
 			setRunning(false);
 			setMessage("You solved it!");
 		}
 	}, [vials]);
 
-	// helper: canPour(fromIdx, toIdx)
+	// helper: canPour/on-component state
 	function canPour(fromIdx, toIdx) {
-		if (fromIdx === toIdx) return false;
-		const src = vials[fromIdx];
-		const dst = vials[toIdx];
-		if (!src || !dst) return false;
-		if (src.layers.length === 0) return false;
-		if (dst.layers.length === 4) return false;
-		const topSrc = src.layers[src.layers.length - 1];
-		if (dst.layers.length === 0) return true;
-		const topDst = dst.layers[dst.layers.length - 1];
-		return topDst === topSrc;
+		return canPourState(vials, fromIdx, toIdx);
 	}
 
-	// perform pour logic: move contiguous same-colored top layers from src to dst until can't
+	// pour on the component state
 	function pour(fromIdx, toIdx) {
 		if (!canPour(fromIdx, toIdx)) return false;
 		const prev = cloneVials(vials);
-		const src = prev[fromIdx];
-		const dst = prev[toIdx];
-		const color = src.layers[src.layers.length - 1];
-
-		// count how many contiguous top layers in src are color
-		let moveCount = 0;
-		for (let i = src.layers.length - 1; i >= 0; i--) {
-			if (src.layers[i] === color) moveCount++;
-			else break;
-		}
-
-		// how much space in dst
-		const space = 4 - dst.layers.length;
-		const actualMove = Math.min(moveCount, space);
-
-		// move
-		for (let k = 0; k < actualMove; k++) {
-			dst.layers.push(src.layers.pop());
-		}
-
-		// push to history for undo
+		const next = doPourState(prev, fromIdx, toIdx);
 		setHistory((h) => [...h, cloneVials(vials)]);
-		setVials(prev);
+		setVials(next);
 		setSelected(null);
 		return true;
 	}
@@ -164,7 +190,7 @@ export default function WaterSortPuzzle() {
 		if (!running) return;
 		if (selected === null) {
 			// select if vial has liquid
-			if (vials[idx].layers.length === 0) return; // cant select empty
+			if (vials[idx].layers.length === 0) return;
 			setSelected(idx);
 		} else {
 			// attempt pour
@@ -174,9 +200,7 @@ export default function WaterSortPuzzle() {
 			}
 			const did = pour(selected, idx);
 			if (!did) {
-				// invalid move: if target matches but no space etc, do nothing
 				setMessage("Can't pour there");
-				// keep selection so user can try another target
 				setTimeout(() => setMessage(""), 1000);
 			} else {
 				setMessage("");
@@ -193,40 +217,170 @@ export default function WaterSortPuzzle() {
 		setTimeout(() => setMessage(""), 800);
 	}
 
+	// --------------------------
+	// Solver (BFS) - find a single canonical shortest path
+	// --------------------------
+	useEffect(() => {
+		if (vials.length === 0) {
+			setSolverInfo({
+				computing: false,
+				found: false,
+				minMoves: null,
+				firstMove: null,
+				reason: "No board",
+			});
+			return;
+		}
+
+		let cancelled = false;
+		setSolverInfo((s) => ({ ...s, computing: true, reason: "" }));
+
+		// Run solver async-ish to keep UI responsive
+		setTimeout(() => {
+			if (cancelled) return;
+
+			const maxDepth = 14; // increase at cost of performance
+			const nodeLimit = 200000;
+			const startStr = stateToString(vials);
+
+			if (isGoal(vials)) {
+				setSolverInfo({
+					computing: false,
+					found: true,
+					minMoves: 0,
+					firstMove: null,
+					reason: "Already solved",
+				});
+				return;
+			}
+
+			// BFS
+			const q = [];
+			const depth = new Map(); // state -> distance
+			const parent = new Map(); // state -> { parentState, move: [from,to] }
+			q.push(startStr);
+			depth.set(startStr, 0);
+			parent.set(startStr, null);
+
+			let nodesVisited = 0;
+			let goalState = null;
+			while (q.length > 0) {
+				const cur = q.shift();
+				nodesVisited++;
+				if (nodesVisited > nodeLimit) break;
+				const d = depth.get(cur);
+				if (d >= maxDepth) continue;
+
+				const curVials = stringToVials(cur);
+
+				// deterministic neighbor order: iterate i then j
+				for (let i = 0; i < curVials.length; i++) {
+					for (let j = 0; j < curVials.length; j++) {
+						if (!canPourState(curVials, i, j)) continue;
+						const nxt = doPourState(curVials, i, j);
+						const nxtStr = stateToString(nxt);
+						if (!depth.has(nxtStr)) {
+							depth.set(nxtStr, d + 1);
+							parent.set(nxtStr, { parentState: cur, move: [i, j] });
+							// If we found a goal, immediately stop: this is a shortest path
+							if (isGoal(nxt)) {
+								goalState = nxtStr;
+								break;
+							}
+							q.push(nxtStr);
+						}
+					}
+					if (goalState) break;
+				}
+				if (goalState) break;
+			}
+
+			if (nodesVisited > nodeLimit) {
+				setSolverInfo({
+					computing: false,
+					found: false,
+					minMoves: null,
+					firstMove: null,
+					reason: "Search aborted (node limit)",
+				});
+				return;
+			}
+
+			if (!goalState) {
+				setSolverInfo({
+					computing: false,
+					found: false,
+					minMoves: null,
+					firstMove: null,
+					reason: "No solution found within depth limit",
+				});
+				return;
+			}
+
+			// reconstruct path from start -> goal using parent map
+			const movesReversed = [];
+			let cur = goalState;
+			while (cur !== startStr) {
+				const entry = parent.get(cur);
+				if (!entry) break; // defensive
+				movesReversed.push(entry.move); // move that led from parent -> cur
+				cur = entry.parentState;
+			}
+			const pathMoves = movesReversed.reverse(); // now pathMoves[0] is first move
+			const minMoves = pathMoves.length;
+			const firstMove = pathMoves.length > 0 ? { from: pathMoves[0][0], to: pathMoves[0][1] } : null;
+
+			setSolverInfo({
+				computing: false,
+				found: true,
+				minMoves,
+				firstMove,
+				reason: "Fastest path found",
+			});
+		}, 10);
+
+		return () => {
+			cancelled = true;
+		};
+	}, [vials]);
+
 	// small helper to render a vial as colored stacked divs
 	function Vial({ vial, idx }) {
 		const isSelected = selected === idx;
+		const hint = solverInfo.firstMove;
+		const isHintFrom = hint && hint.from === idx;
+		const isHintTo = hint && hint.to === idx;
+
+		const ringClass = isSelected
+			? "scale-105 ring-4 ring-indigo-500"
+			: isHintFrom
+			? "ring-4 ring-green-400"
+			: isHintTo
+			? "ring-4 ring-red-400"
+			: "";
+
 		return (
 			<div
 				onPointerDown={() => handleClick(idx)}
-				className={`aspect-[1/3] h-48 bg-gray-800 rounded-xl border-2 border-gray-600 flex flex-col overflow-hidden cursor-pointer relative ${
-					isSelected ? "scale-105 ring-4 ring-indigo-500" : ""
-				}`}
+				className={`aspect-[1/3] h-48 bg-gray-800 rounded-xl border-2 border-gray-600 flex flex-col overflow-hidden cursor-pointer relative ${ringClass}`}
 				title={`Vial ${idx + 1} — ${vial.layers.length}/4`}
 			>
-				{/* layers: render from top (empty or liquid) to bottom */}
+				{/* render top -> bottom so visual is upright */}
 				{Array.from({ length: 4 }).map((_, i) => {
-					const layerIndex = 3 - i; // index from top down
+					const layerIndex = 3 - i;
 					const color = vial.layers[layerIndex];
 					return (
 						<div
 							key={i}
-							className={`flex-1 border-t border-gray-900 ${
-								color ? "" : "bg-white"
-							}`}
-							style={{
-								background: color || "transparent",
-								// transition: "background 300ms",
-							}}
+							className={`flex-1 border-t border-gray-900 ${color ? "" : "bg-white"}`}
+							style={{ background: color || "transparent" }}
 						/>
 					);
 				})}
-				{/* base */}
-				<div className="absolute bottom-0 left-0 right-0 h-2 bg-gray-400 rounded-b-xl" />
+				<div className="absolute bottom-0 left-0 right-0 h-2 bg-gray-700 rounded-b-xl" />
 			</div>
 		);
 	}
-
 
 	// Start game on mount initially
 	useEffect(() => {
@@ -235,7 +389,7 @@ export default function WaterSortPuzzle() {
 	}, []);
 
 	return (
-		<div className="min-h-screen bg-black text-white flex flex-col items-center p-6">
+		<div className="min-h-screen bg-gray-950 text-white flex flex-col items-center p-6">
 			<h1 className="text-2xl md:text-4xl font-bold mb-4">Water Sort Puzzle</h1>
 
 			<div className="w-full max-w-6xl bg-gray-900 shadow-lg rounded-xl p-4 md:p-6">
@@ -244,13 +398,13 @@ export default function WaterSortPuzzle() {
 						<div className="text-sm md:text-base">Vials:</div>
 						<div className="text-lg font-semibold">{numVials}</div>
 						<button
-							className="ml-3 px-3 py-1 bg-black rounded hover:bg-gray-200"
+							className="ml-3 px-3 py-1 bg-black rounded hover:bg-gray-700 border border-gray-700"
 							onClick={() => newGame()}
 						>
 							New Random Game
 						</button>
 						<button
-							className="ml-2 px-3 py-1 bg-black rounded hover:bg-gray-200"
+							className="ml-2 px-3 py-1 bg-black rounded hover:bg-gray-700 border border-gray-700"
 							onClick={() => newGame(numVials)}
 						>
 							Restart Same Count
@@ -262,15 +416,6 @@ export default function WaterSortPuzzle() {
 						<div className="text-lg font-mono font-semibold">{Math.floor(timeLeft)}s</div>
 						<div className="text-sm md:text-base">Score:</div>
 						<div className="text-lg font-semibold">{score}</div>
-
-						<button
-							className={`px-3 py-1 rounded ${history.length ? "bg-indigo-500 text-white" : "bg-gray-200 text-gray-600"}`}
-							onClick={undo}
-							disabled={history.length === 0}
-							title="Undo last move"
-						>
-							Undo
-						</button>
 
 						<button
 							className="px-3 py-1 bg-red-500 text-white rounded"
@@ -290,11 +435,51 @@ export default function WaterSortPuzzle() {
 							<Vial key={i} vial={v} idx={i} />
 						))}
 					</div>
+
+					{/* centered controls below vials */}
+					<div className="mt-4 flex flex-col items-center gap-2">
+						<div className="flex items-center gap-3">
+							<button
+								className={`px-3 py-1 rounded ${history.length ? "bg-indigo-500 text-white" : "bg-gray-700 text-gray-400"}`}
+								onClick={undo}
+								disabled={history.length === 0}
+								title="Undo last move"
+							>
+								Undo
+							</button>
+
+							<div className="text-sm text-gray-300">
+								Moves made: <span className="font-semibold">{history.length}</span>
+							</div>
+
+							<div className="text-sm text-gray-300 ml-4">
+								Solver:{" "}
+								{solverInfo.computing ? (
+									<span>computing…</span>
+								) : solverInfo.found ? (
+									<span>
+										{solverInfo.minMoves} move{solverInfo.minMoves === 1 ? "" : "s"} (fastest)
+									</span>
+								) : (
+									<span className="text-gray-500">{solverInfo.reason}</span>
+								)}
+							</div>
+						</div>
+
+						{solverInfo.firstMove && (
+							<div className="text-sm text-gray-200">
+								Hint: Move from vial <span className="font-semibold">{solverInfo.firstMove.from + 1}</span>{" "}
+								to vial <span className="font-semibold">{solverInfo.firstMove.to + 1}</span> to follow a fastest path.
+							</div>
+						)}
+					</div>
 				</div>
 
 				<div className="mt-4 flex items-center justify-between">
-					<div className="text-sm text-gray-600">Click a filled vial to select, then click another to pour. Top contiguous same-color layers pour until source/top color changes or destination fills.</div>
-					<div className="text-sm text-gray-700">{message}</div>
+					<div className="text-sm text-gray-400">
+						Click a filled vial to select, then click another to pour. Top contiguous same-color layers pour.
+					</div>
+					<div className="text-sm text-gray-300">{message}</div>
 				</div>
 			</div>
 
