@@ -198,7 +198,7 @@ export default function WaterSortPuzzle() {
 		const isSelected = selected === idx;
 		return (
 			<div
-				onClick={() => handleClick(idx)}
+				onPointerDown={() => handleClick(idx)}
 				className={`aspect-[1/3] h-48 bg-gray-800 rounded-xl border-2 border-gray-600 flex flex-col overflow-hidden cursor-pointer relative ${
 					isSelected ? "scale-105 ring-4 ring-indigo-500" : ""
 				}`}
