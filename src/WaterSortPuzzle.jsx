@@ -199,8 +199,8 @@ export default function WaterSortPuzzle() {
 		return (
 			<div
 				onClick={() => handleClick(idx)}
-				className={`aspect-[1/3] h-48 bg-gray-100 rounded-xl border-2 border-gray-300 flex flex-col overflow-hidden cursor-pointer relative transition-transform ${
-					isSelected ? "scale-105 ring-4 ring-indigo-200" : ""
+				className={`aspect-[1/3] h-48 bg-gray-800 rounded-xl border-2 border-gray-600 flex flex-col overflow-hidden cursor-pointer relative ${
+					isSelected ? "scale-105 ring-4 ring-indigo-500" : ""
 				}`}
 				title={`Vial ${idx + 1} — ${vial.layers.length}/4`}
 			>
@@ -211,12 +211,12 @@ export default function WaterSortPuzzle() {
 					return (
 						<div
 							key={i}
-							className={`flex-1 border-t border-gray-200 ${
+							className={`flex-1 border-t border-gray-900 ${
 								color ? "" : "bg-white"
 							}`}
 							style={{
 								background: color || "transparent",
-								transition: "background 300ms",
+								// transition: "background 300ms",
 							}}
 						/>
 					);
@@ -235,22 +235,22 @@ export default function WaterSortPuzzle() {
 	}, []);
 
 	return (
-		<div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6 flex flex-col items-center">
+		<div className="min-h-screen bg-black text-white flex flex-col items-center p-6">
 			<h1 className="text-2xl md:text-4xl font-bold mb-4">Water Sort Puzzle</h1>
 
-			<div className="w-full max-w-6xl bg-white shadow-lg rounded-xl p-4 md:p-6">
+			<div className="w-full max-w-6xl bg-gray-900 shadow-lg rounded-xl p-4 md:p-6">
 				<div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
 					<div className="flex items-center gap-3">
 						<div className="text-sm md:text-base">Vials:</div>
 						<div className="text-lg font-semibold">{numVials}</div>
 						<button
-							className="ml-3 px-3 py-1 bg-gray-100 rounded hover:bg-gray-200"
+							className="ml-3 px-3 py-1 bg-black rounded hover:bg-gray-200"
 							onClick={() => newGame()}
 						>
 							New Random Game
 						</button>
 						<button
-							className="ml-2 px-3 py-1 bg-gray-100 rounded hover:bg-gray-200"
+							className="ml-2 px-3 py-1 bg-black rounded hover:bg-gray-200"
 							onClick={() => newGame(numVials)}
 						>
 							Restart Same Count
